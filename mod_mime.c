@@ -42,33 +42,180 @@ static int mime_engine = FALSE;
 static int mime_logfd = -1;
 static magic_t mime_magic = NULL;
 static int magic_flags = MAGIC_SYMLINK|MAGIC_MIME|MAGIC_ERROR;
+static array_header *mime_allow_types = NULL, *mime_deny_types = NULL;
+static cmd_rec *mime_cmd = NULL;
 
-/* Necessary prototypes */
-static void mime_data_read_ev(const void *, void *);
-
-/* Support routines
+/* FSIO handlers
  */
+
+static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
+    size_t bufsz) {
+  int flags;
+  const char *desc;
+
+  /* If we have already determined the MIME type, then there's nothing more
+   * for us to do.
+   */
+  if (pr_table_get(mime_cmd->notes, "mod_mime.mime-type", NULL) != NULL) {
+    return write(fd, buf, bufsz);
+  }
+
+  flags = magic_flags;
+  flags &= ~MAGIC_MIME_ENCODING;
+
+  magic_setflags(mime_magic, flags);
+  desc = magic_buffer(mime_magic, buf, bufsz);
+  magic_setflags(mime_magic, magic_flags);
+
+  if (desc != NULL) {
+    size_t desclen;
+
+    (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
+      "MIME description for '%s': %s", fh->fh_path, desc);
+
+    desclen = strlen(desc);
+    if (pr_table_add(mime_cmd->notes, "mod_mime.mime-type",
+        pstrndup(mime_cmd->pool, desc, desclen), desclen + 1) < 0) {
+      pr_log_debug(DEBUG0, MOD_MIME_VERSION
+        ": %s: error adding 'mod_mime.mime-type' note: %s", mime_cmd->argv[0],
+        strerror(errno));
+    }
+
+    /* Check the mime type against the allow/deny mime type lists. */
+    if (mime_allow_types != NULL) {
+      register unsigned int i;
+      char **types;
+      int allowed = FALSE;
+
+      types = mime_allow_types->elts;
+      for (i = 0; i < mime_allow_types->nelts; i++) {
+        if (strncasecmp(desc, types[i], desclen + 1) == 0) {
+          allowed = TRUE;
+          break;
+        }
+      }
+
+      if (allowed == FALSE) {
+        (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
+          "MIME type '%s' for '%s' is not in MIMEAllowType list, failing write",
+          desc, fh->fh_path);
+        errno = EACCES;
+        return -1;
+      }
+    }
+
+    if (mime_deny_types != NULL) {
+      register unsigned int i;
+      char **types;
+      int denied = FALSE;
+
+      types = mime_deny_types->elts;
+      for (i = 0; i < mime_deny_types->nelts; i++) {
+        if (strncasecmp(desc, types[i], desclen + 1) == 0) {
+          denied = TRUE;
+          break;
+        }
+      }
+
+      if (denied == TRUE) {
+        (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
+          "MIME type '%s' for '%s' is in MIMEDenyType list, failing write",
+          desc, fh->fh_path);
+        errno = EACCES;
+        return -1;
+      }
+    }
+
+  } else {
+    (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
+      "unable to determine MIME description for '%s' with %lu bytes: %s",
+      fh->fh_path, bufsz, magic_error(mime_magic));
+  }
+
+  return write(fd, buf, bufsz); 
+}
 
 /* Command handlers
  */
 
 MODRET mime_pre_stor(cmd_rec *cmd) {
+  pr_fs_t *fs = NULL;
+
   if (mime_engine == FALSE) {
     return PR_DECLINED(cmd);
   }
 
-  pr_event_register(&mime_module, "core.data-read", mime_data_read_ev, cmd);
+  fs = pr_register_fs(session.pool, "mime", "/");
+  if (fs != NULL) {
+    config_rec *c;
+
+    fs->write = mime_fsio_write;
+
+    mime_cmd = cmd;
+
+    /* Check for <Directory>-specific MIME{Allow,Deny}Type lists. */
+    c = find_config(CURRENT_CONF, CONF_PARAM, "MIMEAllowType", FALSE);
+    if (c != NULL) {
+      mime_allow_types = c->argv[0];
+    }
+
+    c = find_config(CURRENT_CONF, CONF_PARAM, "MIMEDenyType", FALSE);
+    if (c != NULL) {
+      mime_deny_types = c->argv[0];
+    }
+
+  } else {
+    (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
+      "error registering 'mime' fs: %s", strerror(errno));
+  }
+
   return PR_DECLINED(cmd);
 }
 
 MODRET mime_post_stor(cmd_rec *cmd) {
-  /* Remove our netio event listener */
-  pr_event_unregister(&mime_module, "core.data-read", NULL);
+  pr_fs_t *fs = NULL;
+
+  if (mime_engine == FALSE) {
+    return PR_DECLINED(cmd);
+  }
+
+  fs = pr_unmount_fs("/", "mime");
+  if (fs != NULL) {
+    destroy_pool(fs->fs_pool);
+  }
+
+  /* Reset the allow/deny lists. */
+  mime_allow_types = mime_deny_types = NULL;
+  mime_cmd = NULL;
+
   return PR_DECLINED(cmd);
 }
 
 /* Configuration handlers
  */
+
+/* usage: MIME{Allow,Deny}Type type1 ... typeN */
+MODRET set_mimetype(cmd_rec *cmd) {
+  register unsigned int i = 0;
+  config_rec *c;
+  array_header *types;
+
+  if (cmd->argc < 2) {
+    CONF_ERROR(cmd, "missing parameters");
+  }
+
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL|CONF_ANON|CONF_DIR|CONF_DYNDIR);
+
+  c = add_config_param(cmd->argv[0], 1, NULL);
+  types = make_array(c->pool, 0, sizeof(char *));
+  for (i = 1; i < cmd->argc; i++) {
+    *((char **) push_array(types)) = pstrdup(c->pool, cmd->argv[i]);
+  }
+  c->argv[0] = types;
+  c->flags |= CF_MERGEDOWN;
+
+  return PR_HANDLED(cmd);
+}
 
 /* usage: MIMEEngine on|off */
 MODRET set_mimeengine(cmd_rec *cmd) {
@@ -130,42 +277,6 @@ MODRET set_mimetable(cmd_rec *cmd) {
 /* Event listeners
  */
 
-static void mime_data_read_ev(const void *event_data, void *user_data) {
-  const pr_buffer_t *pbuf;
-  cmd_rec *cmd;
-  const char *desc;
-  int flags;
-
-  pbuf = event_data;
-  cmd = user_data;
-
-  flags = magic_flags;
-  flags &= ~MAGIC_MIME_ENCODING;
-
-  magic_setflags(mime_magic, flags);
-  desc = magic_buffer(mime_magic, pbuf->buf, pbuf->buflen);
-  magic_setflags(mime_magic, magic_flags);
-
-  if (desc != NULL) {
-    (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
-      "MIME description for '%s': %s", cmd->arg, desc);
-
-    if (pr_table_add(cmd->notes, "mod_mime.mime-type",
-        pstrdup(cmd->pool, desc), 0) < 0) {
-      pr_log_debug(DEBUG0, MOD_MIME_VERSION
-        ": %s: error adding 'mod_mime.mime-type' note: %s", cmd->argv[0],
-        strerror(errno));
-    }
-
-  } else {
-    (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
-      "unable to determine MIME description for '%s' with %lu bytes: %s",
-      cmd->arg, pbuf->buflen, magic_error(mime_magic));
-  }
- 
-  pr_event_unregister(&mime_module, "core.data-read", NULL);
-}
-
 #ifdef PR_SHARED_MODULE
 static void mime_mod_unload_ev(const void *event_data, void *user_data) {
   if (strcmp("mod_mime.c", (char *) event_data) == 0) {
@@ -183,7 +294,6 @@ static void mime_postparse_ev(const void *event_data, void *user_data) {
   int flags;
 
   if (mime_engine == FALSE) {
-pr_log_debug(DEBUG0, MOD_MIME_VERSION ": postparse: engine is FALSE");
     return;
   }
 
@@ -193,6 +303,7 @@ pr_log_debug(DEBUG0, MOD_MIME_VERSION ": postparse: engine is FALSE");
       strerror(errno));
     return;
   }
+
   pr_log_debug(DEBUG5, MOD_MIME_VERSION ": loaded magic database");
 
   c = find_config(main_server->conf, CONF_PARAM, "MIMETable", FALSE);
@@ -288,6 +399,8 @@ static int mime_sess_init(void) {
  */
 
 static conftable mime_conftab[] = {
+  { "MIMEAllowType",	set_mimetype,		NULL },
+  { "MIMEDenyType",	set_mimetype,		NULL },
   { "MIMEEngine",	set_mimeengine,		NULL },
   { "MIMELog",		set_mimelog,		NULL },
   { "MIMETable",	set_mimetable,		NULL },
