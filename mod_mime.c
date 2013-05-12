@@ -45,6 +45,8 @@ static int magic_flags = MAGIC_SYMLINK|MAGIC_MIME|MAGIC_ERROR;
 static array_header *mime_allow_types = NULL, *mime_deny_types = NULL;
 static cmd_rec *mime_cmd = NULL;
 
+static const char *trace_channel = "mime";
+
 /* FSIO handlers
  */
 
@@ -89,6 +91,8 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
 
       types = mime_allow_types->elts;
       for (i = 0; i < mime_allow_types->nelts; i++) {
+        pr_trace_msg(trace_channel, 8,
+          "checking '%s' against MIMEAllowType '%s'", desc, types[i]);
         if (strncasecmp(desc, types[i], desclen + 1) == 0) {
           allowed = TRUE;
           break;
@@ -111,6 +115,8 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
 
       types = mime_deny_types->elts;
       for (i = 0; i < mime_deny_types->nelts; i++) {
+        pr_trace_msg(trace_channel, 8,
+          "checking '%s' against MIMEDenyType '%s'", desc, types[i]);
         if (strncasecmp(desc, types[i], desclen + 1) == 0) {
           denied = TRUE;
           break;
@@ -141,6 +147,10 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
 MODRET mime_pre_stor(cmd_rec *cmd) {
   pr_fs_t *fs = NULL;
 
+  if (cmd->argc == 1) {
+    return PR_DECLINED(cmd);
+  }
+
   if (mime_engine == FALSE) {
     return PR_DECLINED(cmd);
   }
@@ -148,18 +158,23 @@ MODRET mime_pre_stor(cmd_rec *cmd) {
   fs = pr_register_fs(session.pool, "mime", "/");
   if (fs != NULL) {
     config_rec *c;
+    const char *best_path;
+    xaset_t *dir_ctx;
 
     fs->write = mime_fsio_write;
 
     mime_cmd = cmd;
 
     /* Check for <Directory>-specific MIME{Allow,Deny}Type lists. */
-    c = find_config(CURRENT_CONF, CONF_PARAM, "MIMEAllowType", FALSE);
+    best_path = dir_best_path(cmd->pool, cmd->arg);
+    dir_ctx = get_dir_ctxt(cmd->pool, best_path);
+
+    c = find_config(dir_ctx, CONF_PARAM, "MIMEAllowType", FALSE);
     if (c != NULL) {
       mime_allow_types = c->argv[0];
     }
 
-    c = find_config(CURRENT_CONF, CONF_PARAM, "MIMEDenyType", FALSE);
+    c = find_config(dir_ctx, CONF_PARAM, "MIMEDenyType", FALSE);
     if (c != NULL) {
       mime_deny_types = c->argv[0];
     }
@@ -174,6 +189,10 @@ MODRET mime_pre_stor(cmd_rec *cmd) {
 
 MODRET mime_post_stor(cmd_rec *cmd) {
   pr_fs_t *fs = NULL;
+
+  if (cmd->argc == 1) {
+    return PR_DECLINED(cmd);
+  }
 
   if (mime_engine == FALSE) {
     return PR_DECLINED(cmd);
@@ -204,7 +223,8 @@ MODRET set_mimetype(cmd_rec *cmd) {
     CONF_ERROR(cmd, "missing parameters");
   }
 
-  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL|CONF_ANON|CONF_DIR|CONF_DYNDIR);
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL|CONF_ANON|
+    CONF_DIR|CONF_DYNDIR);
 
   c = add_config_param(cmd->argv[0], 1, NULL);
   types = make_array(c->pool, 0, sizeof(char *));
