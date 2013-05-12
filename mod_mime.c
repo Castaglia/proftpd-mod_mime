@@ -29,7 +29,7 @@
 
 #include "magic.h"
 
-#define MOD_MIME_VERSION	"mod_mime/0.0"
+#define MOD_MIME_VERSION	"mod_mime/0.1"
 
 /* Make sure the version of proftpd is as necessary. */
 #if PROFTPD_VERSION_NUMBER < 0x0001030402
