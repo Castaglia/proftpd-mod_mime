@@ -1,0 +1,7 @@
+tests.log
+.libs
+.*.swp
+*.la
+*.lo
+*.o
+*~
