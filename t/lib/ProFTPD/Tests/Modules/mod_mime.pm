@@ -92,48 +92,17 @@ sub list_tests {
 sub mime_stor_ascii {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -144,13 +113,14 @@ sub mime_stor_ascii {
 
       'mod_mime.c' => {
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -167,8 +137,8 @@ sub mime_stor_ascii {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw('test.txt');
       unless ($conn) {
@@ -195,8 +165,9 @@ sub mime_stor_ascii {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -204,12 +175,11 @@ sub mime_stor_ascii {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
   eval {
-    if (open(my $fh, "< $log_file")) {
+    if (open(my $fh, "< $setup->{log_file}")) {
       my $mime_type;
 
       while (my $line = <$fh>) {
@@ -228,68 +198,30 @@ sub mime_stor_ascii {
         test_msg("Expected MIME type '$expected', got '$mime_type'"));
 
     } else {
-      die("Can't read $log_file: $!");
+      die("Can't read $setup->{log_file}: $!");
     }
   };
   if ($@) {
     $ex = $@;
   }
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_stor_empty {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -300,13 +232,14 @@ sub mime_stor_empty {
 
       'mod_mime.c' => {
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -323,8 +256,8 @@ sub mime_stor_empty {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw('test.txt');
       unless ($conn) {
@@ -349,8 +282,9 @@ sub mime_stor_empty {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -358,12 +292,11 @@ sub mime_stor_empty {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
   eval {
-    if (open(my $fh, "< $log_file")) {
+    if (open(my $fh, "< $setup->{log_file}")) {
       my $mime_type;
 
       while (my $line = <$fh>) {
@@ -381,58 +314,20 @@ sub mime_stor_empty {
         test_msg("Expected no MIME type, got '$mime_type'"));
 
     } else {
-      die("Can't read $log_file: $!");
+      die("Can't read $setup->{log_file}: $!");
     }
   };
   if ($@) {
     $ex = $@;
   }
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_stor_binary {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
@@ -449,12 +344,12 @@ sub mime_stor_binary {
   }
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -465,13 +360,14 @@ sub mime_stor_binary {
 
       'mod_mime.c' => {
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -488,8 +384,8 @@ sub mime_stor_binary {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw('test.dat');
       unless ($conn) {
@@ -515,8 +411,9 @@ sub mime_stor_binary {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -524,12 +421,11 @@ sub mime_stor_binary {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
   eval {
-    if (open(my $fh, "< $log_file")) {
+    if (open(my $fh, "< $setup->{log_file}")) {
       my $mime_type;
 
       while (my $line = <$fh>) {
@@ -548,68 +444,30 @@ sub mime_stor_binary {
         test_msg("Expected MIME type '$expected', got '$mime_type'"));
 
     } else {
-      die("Can't read $log_file: $!");
+      die("Can't read $setup->{log_file}: $!");
     }
   };
   if ($@) {
     $ex = $@;
   }
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_stor_single_byte {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -620,13 +478,14 @@ sub mime_stor_single_byte {
 
       'mod_mime.c' => {
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -643,8 +502,8 @@ sub mime_stor_single_byte {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw('test.txt');
       unless ($conn) {
@@ -671,8 +530,9 @@ sub mime_stor_single_byte {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -680,12 +540,11 @@ sub mime_stor_single_byte {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
   eval {
-    if (open(my $fh, "< $log_file")) {
+    if (open(my $fh, "< $setup->{log_file}")) {
       my $mime_type;
 
       while (my $line = <$fh>) {
@@ -704,58 +563,20 @@ sub mime_stor_single_byte {
         test_msg("Expected MIME type '$expected', got '$mime_type'"));
 
     } else {
-      die("Can't read $log_file: $!");
+      die("Can't read $setup->{log_file}: $!");
     }
   };
   if ($@) {
     $ex = $@;
   }
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_config_allowtype_with_gif {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
@@ -772,12 +593,12 @@ sub mime_config_allowtype_with_gif {
   }
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -789,13 +610,14 @@ sub mime_config_allowtype_with_gif {
       'mod_mime.c' => {
         MIMEAllowType => 'image/gif',
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -812,8 +634,8 @@ sub mime_config_allowtype_with_gif {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw('test.dat');
       unless ($conn) {
@@ -839,8 +661,9 @@ sub mime_config_allowtype_with_gif {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -848,12 +671,11 @@ sub mime_config_allowtype_with_gif {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
   eval {
-    if (open(my $fh, "< $log_file")) {
+    if (open(my $fh, "< $setup->{log_file}")) {
       my $mime_type;
 
       while (my $line = <$fh>) {
@@ -872,58 +694,20 @@ sub mime_config_allowtype_with_gif {
         test_msg("Expected MIME type '$expected', got '$mime_type'"));
 
     } else {
-      die("Can't read $log_file: $!");
+      die("Can't read $setup->{log_file}: $!");
     }
   };
   if ($@) {
     $ex = $@;
   }
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_config_allowtype_without_gif {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
@@ -940,12 +724,12 @@ sub mime_config_allowtype_without_gif {
   }
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -957,13 +741,14 @@ sub mime_config_allowtype_without_gif {
       'mod_mime.c' => {
         MIMEAllowType => 'text/plain',
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -980,8 +765,8 @@ sub mime_config_allowtype_without_gif {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw('test.dat');
       unless ($conn) {
@@ -1014,8 +799,9 @@ sub mime_config_allowtype_without_gif {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -1023,12 +809,11 @@ sub mime_config_allowtype_without_gif {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
   eval {
-    if (open(my $fh, "< $log_file")) {
+    if (open(my $fh, "< $setup->{log_file}")) {
       my $mime_type;
 
       while (my $line = <$fh>) {
@@ -1047,58 +832,20 @@ sub mime_config_allowtype_without_gif {
         test_msg("Expected MIME type '$expected', got '$mime_type'"));
 
     } else {
-      die("Can't read $log_file: $!");
+      die("Can't read $setup->{log_file}: $!");
     }
   };
   if ($@) {
     $ex = $@;
   }
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_config_allowtype_using_dir {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
@@ -1121,14 +868,14 @@ sub mime_config_allowtype_using_dir {
   mkpath($sub_dir2);
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
-    TraceLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
     Trace => 'mime:10',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -1139,14 +886,15 @@ sub mime_config_allowtype_using_dir {
 
       'mod_mime.c' => {
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
-  if (open(my $fh, ">> $config_file")) {
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory ~/test1.d>
   MIMEAllowType image/gif
@@ -1159,11 +907,11 @@ sub mime_config_allowtype_using_dir {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -1181,8 +929,8 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       # We should be able to upload a GIF to test1.d, but not a text file
       my $conn = $client->stor_raw('test1.d/test.dat');
@@ -1265,8 +1013,9 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -1274,55 +1023,16 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_config_allowtype_using_ftpaccess {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
@@ -1369,14 +1079,14 @@ sub mime_config_allowtype_using_ftpaccess {
   }
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
-    TraceLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
     Trace => 'mime:10',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverride => 'on',
     AllowOverwrite => 'on',
@@ -1388,13 +1098,14 @@ sub mime_config_allowtype_using_ftpaccess {
 
       'mod_mime.c' => {
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -1411,8 +1122,8 @@ sub mime_config_allowtype_using_ftpaccess {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       # We should be able to upload a GIF to test1.d, but not a text file
       my $conn = $client->stor_raw('test1.d/test.dat');
@@ -1495,8 +1206,9 @@ sub mime_config_allowtype_using_ftpaccess {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -1504,55 +1216,16 @@ sub mime_config_allowtype_using_ftpaccess {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_config_denytype_with_gif {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
@@ -1569,12 +1242,12 @@ sub mime_config_denytype_with_gif {
   }
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -1586,13 +1259,14 @@ sub mime_config_denytype_with_gif {
       'mod_mime.c' => {
         MIMEDenyType => 'image/gif',
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -1609,8 +1283,8 @@ sub mime_config_denytype_with_gif {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw('test.dat');
       unless ($conn) {
@@ -1643,8 +1317,9 @@ sub mime_config_denytype_with_gif {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -1652,12 +1327,11 @@ sub mime_config_denytype_with_gif {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
   eval {
-    if (open(my $fh, "< $log_file")) {
+    if (open(my $fh, "< $setup->{log_file}")) {
       my $mime_type;
 
       while (my $line = <$fh>) {
@@ -1676,58 +1350,20 @@ sub mime_config_denytype_with_gif {
         test_msg("Expected MIME type '$expected', got '$mime_type'"));
 
     } else {
-      die("Can't read $log_file: $!");
+      die("Can't read $setup->{log_file}: $!");
     }
   };
   if ($@) {
     $ex = $@;
   }
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_config_denytype_without_gif {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
@@ -1744,12 +1380,12 @@ sub mime_config_denytype_without_gif {
   }
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -1761,13 +1397,14 @@ sub mime_config_denytype_without_gif {
       'mod_mime.c' => {
         MIMEDenyType => 'text/plain',
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -1784,8 +1421,8 @@ sub mime_config_denytype_without_gif {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw('test.dat');
       unless ($conn) {
@@ -1811,8 +1448,9 @@ sub mime_config_denytype_without_gif {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -1820,12 +1458,11 @@ sub mime_config_denytype_without_gif {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
   eval {
-    if (open(my $fh, "< $log_file")) {
+    if (open(my $fh, "< $setup->{log_file}")) {
       my $mime_type;
 
       while (my $line = <$fh>) {
@@ -1844,58 +1481,20 @@ sub mime_config_denytype_without_gif {
         test_msg("Expected MIME type '$expected', got '$mime_type'"));
 
     } else {
-      die("Can't read $log_file: $!");
+      die("Can't read $setup->{log_file}: $!");
     }
   };
   if ($@) {
     $ex = $@;
   }
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_config_denytype_using_dir {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
@@ -1918,14 +1517,14 @@ sub mime_config_denytype_using_dir {
   mkpath($sub_dir2);
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
-    TraceLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
     Trace => 'mime:10',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverwrite => 'on',
 
@@ -1936,14 +1535,15 @@ sub mime_config_denytype_using_dir {
 
       'mod_mime.c' => {
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
-  if (open(my $fh, ">> $config_file")) {
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory ~/test1.d>
   MIMEDenyType image/gif
@@ -1956,11 +1556,11 @@ sub mime_config_denytype_using_dir {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -1978,8 +1578,8 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       # We should be able to upload a text file to test1.d, but not a GIF
       my $conn = $client->stor_raw('test1.d/test.txt');
@@ -2062,8 +1662,9 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -2071,55 +1672,16 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_config_denytype_using_ftpaccess {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/mime.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/mime.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/mime.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/mime.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/mime.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'mime');
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
@@ -2166,14 +1728,14 @@ sub mime_config_denytype_using_ftpaccess {
   }
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
-    TraceLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
     Trace => 'mime:10',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
 
     AllowOverride => 'on',
     AllowOverwrite => 'on',
@@ -2185,13 +1747,14 @@ sub mime_config_denytype_using_ftpaccess {
 
       'mod_mime.c' => {
         MIMEEngine => 'on',
-        MIMELog => $log_file,
+        MIMELog => $setup->{log_file},
         MIMETable => $mime_tab,
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -2208,8 +1771,8 @@ sub mime_config_denytype_using_ftpaccess {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
 
       # We should be able to upload a text file to test1.d, but not a GIF
       my $conn = $client->stor_raw('test1.d/test.txt');
@@ -2292,8 +1855,9 @@ sub mime_config_denytype_using_ftpaccess {
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
-    if ($@) { warn($@);
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
       exit 1;
     }
 
@@ -2301,18 +1865,10 @@ sub mime_config_denytype_using_ftpaccess {
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 1;

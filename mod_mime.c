@@ -1,7 +1,7 @@
 /*
  * ProFTPD: mod_mime -- provides MIME type detection
  *
- * Copyright (c) 2013 TJ Saunders
+ * Copyright (c) 2013-2016 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
  * This is mod_mime, contrib software for proftpd 1.3.x and above.
  * For more information contact TJ Saunders <tj@castaglia.org>.
  *
- * --- DO NOT DELETE BELOW THIS LINE ----
+ * -----DO NOT DELETE BELOW THIS LINE-----
  * $Libraries: -lmagic$
  */
 
@@ -158,7 +158,7 @@ MODRET mime_pre_stor(cmd_rec *cmd) {
   fs = pr_register_fs(session.pool, "mime", "/");
   if (fs != NULL) {
     config_rec *c;
-    const char *best_path;
+    char *best_path;
     xaset_t *dir_ctx;
 
     fs->write = mime_fsio_write;
@@ -311,13 +311,12 @@ static void mime_mod_unload_ev(const void *event_data, void *user_data) {
 
 static void mime_postparse_ev(const void *event_data, void *user_data) {
   config_rec *c;
-  int flags;
 
   if (mime_engine == FALSE) {
     return;
   }
 
-  mime_magic = magic_open(flags);
+  mime_magic = magic_open(magic_flags);
   if (mime_magic == NULL) {
     pr_log_debug(DEBUG0, MOD_MIME_VERSION ": error loading database: %s",
       strerror(errno));
@@ -334,7 +333,7 @@ static void mime_postparse_ev(const void *event_data, void *user_data) {
 
     pr_log_debug(DEBUG7, MOD_MIME_VERSION
       ": loading additional MIME databases using '%s'", tables);
-    if (magic_load(mime_magic, c->argv[0]) < 0) {
+    if (magic_load(mime_magic, tables) < 0) {
       const char *errstr;
       int xerrno = errno;
 
