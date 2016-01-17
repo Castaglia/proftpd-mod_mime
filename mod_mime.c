@@ -47,6 +47,8 @@ static cmd_rec *mime_cmd = NULL;
 
 static const char *trace_channel = "mime";
 
+static int mime_sess_init(void);
+
 /* FSIO handlers
  */
 
@@ -210,6 +212,21 @@ MODRET mime_post_stor(cmd_rec *cmd) {
   return PR_DECLINED(cmd);
 }
 
+MODRET mime_post_pass(cmd_rec *cmd) {
+  config_rec *c;
+
+  if (mime_engine == FALSE) {
+    return PR_DECLINED(cmd);
+  }
+
+  c = find_config(main_server->conf, CONF_PARAM, "MIMEEngine", FALSE);
+  if (c != NULL) {
+    mime_engine = *((int *) c->argv[0]);
+  }
+
+  return PR_DECLINED(cmd);
+}
+
 /* Configuration handlers
  */
 
@@ -348,6 +365,18 @@ static void mime_postparse_ev(const void *event_data, void *user_data) {
   }
 }
 
+static void mime_sess_reinit_ev(const void *event_data, void *user_data) {
+  int res;
+
+  pr_event_unregister(&mime_module, "core.session-reinit", mime_sess_reinit_ev);
+
+  res = mime_sess_init();
+  if (res < 0) {
+    pr_session_disconnect(&mime_module, PR_SESS_DISCONNECT_SESSION_INIT_FAILED,
+      NULL);
+  }
+}
+
 static void mime_shutdown_ev(const void *event_data, void *user_data) {
   if (mime_magic != NULL) {
     magic_close(mime_magic);
@@ -376,6 +405,9 @@ static int mime_sess_init(void) {
   if (mime_magic == NULL) {
     return 0;
   }
+
+  pr_event_register(&mime_module, "core.session-reinit", mime_sess_reinit_ev,
+    NULL);
 
   mime_engine = FALSE;
 
@@ -437,6 +469,8 @@ static cmdtable mime_cmdtab[] = {
   { POST_CMD_ERR,	C_APPE,	G_NONE, mime_post_stor,	TRUE,	FALSE },
   { POST_CMD_ERR,	C_STOR,	G_NONE, mime_post_stor,	TRUE,	FALSE },
   { POST_CMD_ERR,	C_STOU,	G_NONE, mime_post_stor,	TRUE,	FALSE },
+
+  { POST_CMD,		C_PASS,	G_NONE,	mime_post_pass,	FALSE,	FALSE },
 
   { 0, NULL }
 };
