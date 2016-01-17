@@ -29,7 +29,7 @@
 
 #include "magic.h"
 
-#define MOD_MIME_VERSION	"mod_mime/0.1"
+#define MOD_MIME_VERSION	"mod_mime/0.2"
 
 /* Make sure the version of proftpd is as necessary. */
 #if PROFTPD_VERSION_NUMBER < 0x0001030402
@@ -44,6 +44,20 @@ static magic_t mime_magic = NULL;
 static int magic_flags = MAGIC_SYMLINK|MAGIC_MIME|MAGIC_ERROR;
 static array_header *mime_allow_types = NULL, *mime_deny_types = NULL;
 static cmd_rec *mime_cmd = NULL;
+
+#define MIME_OPT_NO_MLSX_FACTS		0x0001
+
+/* Note that the internal APIs for supporting the "media-type" fact only
+ * appeared, in working order, in 1.3.6rc2.  So disable it by default for
+ * earlier versions of proftpd.
+ */
+#if PROFTPD_VERSION_NUMBER < 0x0001030602
+# define MIME_DEFAULT_OPTS		MIME_OPT_NO_MLSX_FACTS
+#else
+# define MIME_DEFAULT_OPTS		0UL
+#endif
+
+static unsigned long mime_opts = MIME_DEFAULT_OPTS;
 
 static const char *trace_channel = "mime";
 
@@ -215,16 +229,68 @@ MODRET mime_post_stor(cmd_rec *cmd) {
 MODRET mime_post_pass(cmd_rec *cmd) {
   config_rec *c;
 
-  if (mime_engine == FALSE) {
-    return PR_DECLINED(cmd);
-  }
-
   c = find_config(main_server->conf, CONF_PARAM, "MIMEEngine", FALSE);
   if (c != NULL) {
     mime_engine = *((int *) c->argv[0]);
   }
 
+  if (mime_engine == FALSE) {
+    return PR_DECLINED(cmd);
+  }
+
+  c = find_config(main_server->conf, CONF_PARAM, "MIMEOptions", FALSE);
+  while (c != NULL) {
+    unsigned long opts = 0;
+
+    pr_signals_handle();
+
+    opts = *((unsigned long *) c->argv[0]);
+    mime_opts |= opts;
+
+    c = find_config_next(c, c->next, CONF_PARAM, "MIMEOptions", FALSE);
+  }
+
   return PR_DECLINED(cmd);
+}
+
+/* Hooks
+ */
+
+MODRET mime_filetype(cmd_rec *cmd) {
+  int flags;
+  const char *desc, *path;
+
+  if (mime_magic == NULL) {
+    return PR_DECLINED(cmd);
+  }
+
+  if (mime_engine == FALSE) {
+    return PR_DECLINED(cmd);
+  }
+
+  if (mime_opts & MIME_OPT_NO_MLSX_FACTS) {
+    return PR_DECLINED(cmd);
+  }
+
+  path = cmd->argv[0];
+
+  flags = magic_flags;
+  flags &= ~MAGIC_MIME_ENCODING;
+
+  magic_setflags(mime_magic, flags);
+  desc = magic_file(mime_magic, path);
+  magic_setflags(mime_magic, magic_flags);
+
+  if (desc == NULL) {
+    pr_trace_msg(trace_channel, 9,
+      "unable to determine MIME description for '%s': %s", path,
+      magic_error(mime_magic));
+    return PR_DECLINED(cmd);
+  }
+
+  pr_trace_msg(trace_channel, 15,
+    "MIME description for '%s': %s (via HOOK)", path, desc);
+  return mod_create_data(cmd, pstrdup(cmd->pool, desc));
 }
 
 /* Configuration handlers
@@ -284,6 +350,36 @@ MODRET set_mimelog(cmd_rec *cmd) {
   CHECK_ARGS(cmd, 1);
 
   add_config_param_str(cmd->argv[0], 1, cmd->argv[1]);
+  return PR_HANDLED(cmd);
+}
+
+/* usage: MIMEOptions opt1 ... */
+MODRET set_mimeoptions(cmd_rec *cmd) {
+  config_rec *c = NULL;
+  register unsigned int i = 0;
+  unsigned long opts = 0UL;
+
+  if (cmd->argc-1 == 0) {
+    CONF_ERROR(cmd, "wrong number of parameters");
+  }
+
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+
+  c = add_config_param(cmd->argv[0], 1, NULL);
+
+  for (i = 1; i < cmd->argc; i++) {
+    if (strcmp(cmd->argv[i], "NoMLSxFacts") == 0) {
+      opts |= MIME_OPT_NO_MLSX_FACTS;
+
+    } else {
+      CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, ": unknown MIMEOption '",
+        cmd->argv[i], "'", NULL));
+    }
+  }
+
+  c->argv[0] = pcalloc(c->pool, sizeof(unsigned long));
+  *((unsigned long *) c->argv[0]) = opts;
+
   return PR_HANDLED(cmd);
 }
 
@@ -410,6 +506,7 @@ static int mime_sess_init(void) {
     NULL);
 
   mime_engine = FALSE;
+  mime_opts = MIME_DEFAULT_OPTS;
 
   c = find_config(main_server->conf, CONF_PARAM, "MIMEEngine", FALSE);
   if (c != NULL) {
@@ -443,6 +540,18 @@ static int mime_sess_init(void) {
     }
   }
 
+  c = find_config(main_server->conf, CONF_PARAM, "MIMEOptions", FALSE);
+  while (c != NULL) {
+    unsigned long opts = 0;
+
+    pr_signals_handle();
+
+    opts = *((unsigned long *) c->argv[0]);
+    mime_opts |= opts;
+
+    c = find_config_next(c, c->next, CONF_PARAM, "MIMEOptions", FALSE);
+  }
+
   return 0;
 }
 
@@ -454,7 +563,9 @@ static conftable mime_conftab[] = {
   { "MIMEDenyType",	set_mimetype,		NULL },
   { "MIMEEngine",	set_mimeengine,		NULL },
   { "MIMELog",		set_mimelog,		NULL },
+  { "MIMEOptions",	set_mimeoptions,	NULL },
   { "MIMETable",	set_mimetable,		NULL },
+
   { NULL }
 };
 
@@ -471,6 +582,9 @@ static cmdtable mime_cmdtab[] = {
   { POST_CMD_ERR,	C_STOU,	G_NONE, mime_post_stor,	TRUE,	FALSE },
 
   { POST_CMD,		C_PASS,	G_NONE,	mime_post_pass,	FALSE,	FALSE },
+
+  /* Module hooks */
+  { HOOK,		"mime_type", G_NONE, mime_filetype, TRUE, FALSE },
 
   { 0, NULL }
 };
