@@ -19,6 +19,26 @@ $| = 1;
 my $order = 0;
 
 my $TESTS = {
+  mime_feat_mlst_media_type => {
+    order => ++$order,
+    test_class => [qw(forking)],
+  },
+
+  mime_opts_mlst_media_type => {
+    order => ++$order,
+    test_class => [qw(forking)],
+  },
+
+  mime_mlsd_media_type => {
+    order => ++$order,
+    test_class => [qw(forking)],
+  },
+
+  mime_mlst_media_type => {
+    order => ++$order,
+    test_class => [qw(forking)],
+  },
+
   mime_stor_ascii => {
     order => ++$order,
     test_class => [qw(forking)],
@@ -87,6 +107,482 @@ sub new {
 
 sub list_tests {
   return testsuite_get_runnable_tests($TESTS);
+}
+
+sub mime_feat_mlst_media_type {
+  my $self = shift;
+  my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'mime');
+
+  my $config = {
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+
+    AllowOverwrite => 'on',
+
+    IfModules => {
+      'mod_delay.c' => {
+        DelayEngine => 'off',
+      },
+
+      'mod_mime.c' => {
+        MIMEEngine => 'on',
+      },
+    },
+  };
+
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
+
+  # Open pipes, for use between the parent and child processes.  Specifically,
+  # the child will indicate when it's done with its test by writing a message
+  # to the parent.
+  my ($rfh, $wfh);
+  unless (pipe($rfh, $wfh)) {
+    die("Can't open pipe: $!");
+  }
+
+  my $ex;
+
+  # Fork child
+  $self->handle_sigchld();
+  defined(my $pid = fork()) or die("Can't fork: $!");
+  if ($pid) {
+    eval {
+      # Allow server to start up
+      sleep(1);
+
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->feat();
+
+      my $resp_code = $client->response_code();
+      my $resp_msgs = $client->response_msgs();
+
+      $client->quit();
+
+      my $expected = 211;
+      $self->assert($expected == $resp_code,
+        test_msg("Expected response code $expected, got $resp_code"));
+
+      my $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.mode*;UNIX.owner*;media-type*;';
+
+      my $found = 0;
+      my $nfeat = scalar(@$resp_msgs);
+      for (my $i = 0; $i < $nfeat; $i++) {
+        if ($resp_msgs->[$i] eq $expected_feat) {
+          $found = 1;
+          last;
+        }
+      }
+
+      $self->assert($found, test_msg("Did not see expected '$expected_feat'"));
+    };
+
+    if ($@) {
+      $ex = $@;
+    }
+
+    $wfh->print("done\n");
+    $wfh->flush();
+
+  } else {
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
+      exit 1;
+    }
+
+    exit 0;
+  }
+
+  # Stop server
+  server_stop($setup->{pid_file});
+  $self->assert_child_ok($pid);
+
+  test_cleanup($setup->{log_file}, $ex);
+}
+
+sub mime_opts_mlst_media_type {
+  my $self = shift;
+  my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'mime');
+
+  my $config = {
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+
+    AllowOverwrite => 'on',
+
+    IfModules => {
+      'mod_delay.c' => {
+        DelayEngine => 'off',
+      },
+
+      'mod_mime.c' => {
+        MIMEEngine => 'on',
+      },
+    },
+  };
+
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
+
+  # Open pipes, for use between the parent and child processes.  Specifically,
+  # the child will indicate when it's done with its test by writing a message
+  # to the parent.
+  my ($rfh, $wfh);
+  unless (pipe($rfh, $wfh)) {
+    die("Can't open pipe: $!");
+  }
+
+  my $ex;
+
+  # Fork child
+  $self->handle_sigchld();
+  defined(my $pid = fork()) or die("Can't fork: $!");
+  if ($pid) {
+    eval {
+      # Allow server to start up
+      sleep(1);
+
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+
+      my $mime_type_opts = 'modify;perm;size;type;unique;UNIX.group;UNIX.mode;UNIX.owner;';
+      my ($resp_code, $resp_msg) = $client->opts("MLST $mime_type_opts");
+
+      my $expected = 200;
+      $self->assert($expected == $resp_code,
+        test_msg("Expected response code $expected, got $resp_code"));
+
+      $expected = 'MLST OPTS modify;perm;size;type;unique;UNIX.group;UNIX.mode;UNIX.owner;';
+      $self->assert($expected eq $resp_msg,
+        test_msg("Expected response message '$expected', got '$resp_msg'"));
+
+      $client->feat();
+      $resp_code = $client->response_code();
+      my $resp_msgs = $client->response_msgs();
+
+      $expected = 211;
+      $self->assert($expected == $resp_code,
+        test_msg("Expected response code $expected, got $resp_code"));
+
+      my $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.mode*;UNIX.owner*;';
+
+      my $found = 0;
+      my $nfeat = scalar(@$resp_msgs);
+      for (my $i = 0; $i < $nfeat; $i++) {
+        if ($resp_msgs->[$i] eq $expected_feat) {
+          $found = 1;
+          last;
+        }
+      }
+
+      $self->assert($found, test_msg("Did not see expected '$expected_feat'"));
+
+      # OPTS MLST to re-enable media-type; confirm via FEAT
+      my $mime_type_opts = 'modify;perm;size;type;unique;UNIX.group;UNIX.mode;UNIX.owner;media-type;';
+      my ($resp_code, $resp_msg) = $client->opts("MLST $mime_type_opts");
+
+      my $expected = 200;
+      $self->assert($expected == $resp_code,
+        test_msg("Expected response code $expected, got $resp_code"));
+
+      $expected = 'MLST OPTS modify;perm;size;type;unique;UNIX.group;UNIX.mode;UNIX.owner;media-type;';
+      $self->assert($expected eq $resp_msg,
+        test_msg("Expected response message '$expected', got '$resp_msg'"));
+
+      $client->feat();
+      $resp_code = $client->response_code();
+      $resp_msgs = $client->response_msgs();
+
+      $client->quit();
+
+      $expected = 211;
+      $self->assert($expected == $resp_code,
+        test_msg("Expected response code $expected, got $resp_code"));
+
+      $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.mode*;UNIX.owner*;media-type*;';
+
+      my $found = 0;
+      my $nfeat = scalar(@$resp_msgs);
+      for (my $i = 0; $i < $nfeat; $i++) {
+        if ($resp_msgs->[$i] eq $expected_feat) {
+          $found = 1;
+          last;
+        }
+      }
+
+      $self->assert($found, test_msg("Did not see expected '$expected_feat'"));
+    };
+
+    if ($@) {
+      $ex = $@;
+    }
+
+    $wfh->print("done\n");
+    $wfh->flush();
+
+  } else {
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
+      exit 1;
+    }
+
+    exit 0;
+  }
+
+  # Stop server
+  server_stop($setup->{pid_file});
+  $self->assert_child_ok($pid);
+
+  test_cleanup($setup->{log_file}, $ex);
+}
+
+sub mime_mlsd_media_type {
+  my $self = shift;
+  my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'mime');
+
+  my $test_dir = File::Spec->rel2abs('t/etc/modules/mod_mime');
+  my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
+
+  my $config = {
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'facts:20 mime:20',
+
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+
+    AllowOverwrite => 'on',
+
+    IfModules => {
+      'mod_delay.c' => {
+        DelayEngine => 'off',
+      },
+
+      'mod_mime.c' => {
+        MIMEEngine => 'on',
+        MIMELog => $setup->{log_file},
+        MIMETable => $mime_tab,
+      },
+    },
+  };
+
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
+
+  # Open pipes, for use between the parent and child processes.  Specifically,
+  # the child will indicate when it's done with its test by writing a message
+  # to the parent.
+  my ($rfh, $wfh);
+  unless (pipe($rfh, $wfh)) {
+    die("Can't open pipe: $!");
+  }
+
+  my $ex;
+
+  # Fork child
+  $self->handle_sigchld();
+  defined(my $pid = fork()) or die("Can't fork: $!");
+  if ($pid) {
+    eval {
+      # Allow server to start up
+      sleep(1);
+
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
+
+      my $conn = $client->mlsd_raw($test_dir);
+      unless ($conn) {
+        die("Failed to MLSD $test_dir: " . $client->response_code() . " " .
+          $client->response_msg());
+      }
+
+      my $buf;
+      $conn->read($buf, 8192, 30);
+      eval { $conn->close() };
+
+      my $resp_code = $client->response_code();
+      my $resp_msg = $client->response_msg();
+      $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      $client->quit();
+
+      # We have to be careful of the fact that readdir returns directory
+      # entries in an unordered fashion.
+      my $res = {};
+      my $lines = [split(/(\r)?\n/, $buf)];
+      foreach my $line (@$lines) {
+        if ($line =~ /^modify=\S+;perm=\S+;type=(\S+);unique=\S+;UNIX\.group=\d+;UNIX\.mode=\d+;UNIX.owner=\d+;media-type=(\S+); (.*?)$/) {
+          $res->{$3} = $2;
+        }
+      }
+
+      my $expected = {
+        '.' => 'inode/directory',
+        '..' => 'inode/directory',
+        'magic.mgc' => 'application/octet-stream',
+        'RukaiMask.gif' => 'image/gif',
+      };
+
+      my $ok = 1;
+      my $mismatch;
+      foreach my $name (keys(%$expected)) {
+        unless (defined($res->{$name})) {
+          $mismatch = $name;
+          $ok = 0;
+          last;
+        }
+
+        my $mime_type = $res->{$name};
+        unless ($mime_type eq $expected->{$name}) {
+          $ok = 0;
+          last;
+        }
+      }
+
+      $self->assert($ok,
+        test_msg("Expected name '$mismatch' did not match expected pattern in MLSD data"));
+    };
+
+    if ($@) {
+      $ex = $@;
+    }
+
+    $wfh->print("done\n");
+    $wfh->flush();
+
+  } else {
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
+      exit 1;
+    }
+
+    exit 0;
+  }
+
+  # Stop server
+  server_stop($setup->{pid_file});
+  $self->assert_child_ok($pid);
+
+  test_cleanup($setup->{log_file}, $ex);
+}
+
+sub mime_mlst_media_type {
+  my $self = shift;
+  my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'mime');
+
+  my $test_file = File::Spec->rel2abs('t/etc/modules/mod_mime/RukaiMask.gif');
+  my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
+
+  my $config = {
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'facts:20 mime:20',
+
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+
+    AllowOverwrite => 'on',
+
+    IfModules => {
+      'mod_delay.c' => {
+        DelayEngine => 'off',
+      },
+
+      'mod_mime.c' => {
+        MIMEEngine => 'on',
+        MIMELog => $setup->{log_file},
+        MIMETable => $mime_tab,
+      },
+    },
+  };
+
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
+
+  # Open pipes, for use between the parent and child processes.  Specifically,
+  # the child will indicate when it's done with its test by writing a message
+  # to the parent.
+  my ($rfh, $wfh);
+  unless (pipe($rfh, $wfh)) {
+    die("Can't open pipe: $!");
+  }
+
+  my $ex;
+
+  # Fork child
+  $self->handle_sigchld();
+  defined(my $pid = fork()) or die("Can't fork: $!");
+  if ($pid) {
+    eval {
+      # Allow server to start up
+      sleep(1);
+
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
+      $client->login($setup->{user}, $setup->{passwd});
+
+      $client->mlst($test_file);
+      my $resp_code = $client->response_code();
+      my $resp_msgs = $client->response_msgs();
+      $client->quit();
+
+      my $expected = 250;
+      $self->assert($expected == $resp_code,
+        test_msg("Expected response code $expected, got $resp_code"));
+
+      $expected = " modify=20160116222604;perm=adfrw;size=2881;type=file;unique=1000004UAB7BD4;UNIX.group=20;UNIX.mode=0644;UNIX.owner=501;media-type=image/gif; $test_file";
+      my $ok = 0;
+      my $nmsgs = scalar(@$resp_msgs);
+      for (my $i = 0; $i < $nmsgs; $i++) {
+        if ($resp_msgs->[$i] eq $expected) {
+          $ok = 1;
+          last;
+        }
+      }
+
+      $self->assert($ok,
+        test_msg("Did not see expected data '$expected' in MLST response"));
+    };
+
+    if ($@) {
+      $ex = $@;
+    }
+
+    $wfh->print("done\n");
+    $wfh->flush();
+
+  } else {
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
+      exit 1;
+    }
+
+    exit 0;
+  }
+
+  # Stop server
+  server_stop($setup->{pid_file});
+  $self->assert_child_ok($pid);
+
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub mime_stor_ascii {
