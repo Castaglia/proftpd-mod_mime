@@ -466,6 +466,12 @@ static void mime_sess_reinit_ev(const void *event_data, void *user_data) {
 
   pr_event_unregister(&mime_module, "core.session-reinit", mime_sess_reinit_ev);
 
+  /* Reset defaults */
+  mime_magic = FALSE;
+  mime_opts = MIME_DEFAULT_OPTS;
+  (void) close(mime_logfd);
+  mime_logfd = -1;
+
   res = mime_sess_init();
   if (res < 0) {
     pr_session_disconnect(&mime_module, PR_SESS_DISCONNECT_SESSION_INIT_FAILED,
