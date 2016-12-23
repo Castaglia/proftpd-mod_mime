@@ -1,6 +1,5 @@
 /*
  * ProFTPD: mod_mime -- provides MIME type detection
- *
  * Copyright (c) 2013-2016 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
@@ -95,8 +94,8 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
     if (pr_table_add(mime_cmd->notes, "mod_mime.mime-type",
         pstrndup(mime_cmd->pool, desc, desclen), desclen + 1) < 0) {
       pr_log_debug(DEBUG0, MOD_MIME_VERSION
-        ": %s: error adding 'mod_mime.mime-type' note: %s", mime_cmd->argv[0],
-        strerror(errno));
+        ": %s: error adding 'mod_mime.mime-type' note: %s",
+        (char *) mime_cmd->argv[0], strerror(errno));
     }
 
     /* Check the mime type against the allow/deny mime type lists. */
@@ -413,7 +412,7 @@ MODRET set_mimetable(cmd_rec *cmd) {
 #ifdef PR_SHARED_MODULE
 static void mime_mod_unload_ev(const void *event_data, void *user_data) {
   if (strcmp("mod_mime.c", (char *) event_data) == 0) {
-    pr_event_unregister(&mime_module, NULL);
+    pr_event_unregister(&mime_module, NULL, NULL);
     if (mime_magic != NULL) {
       magic_close(mime_magic);
       mime_magic = NULL;
