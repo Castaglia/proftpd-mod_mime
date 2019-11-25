@@ -9,12 +9,14 @@ install:
   - sudo apt-get update -qq
   # for unit tests
   - sudo apt-get install -y check
+  - sudo apt-get install -y libsubunit-dev
   # for OpenSSL support
   - sudo apt-get install -y libssl-dev
   # for MIME support
   - sudo apt-get install -y libmagic-dev
   # for static code analysis
-  - sudo apt-get install -y cppcheck rats
+  # - sudo apt-get install -y cppcheck
+  # - sudo apt-get install -y rats
   # for test code coverage
   - sudo apt-get install -y lcov
   - gem install coveralls-lcov
@@ -26,12 +28,12 @@ before_script:
 script:
   # - find . -type f -name "*.c" -print | grep -v t\/ | xargs cppcheck 2>&1
   # - find . -type f -name "*.c" -print | grep -v t\/ | xargs rats --language=c
-  - git clone https://github.com/proftpd/proftpd.git
+  - git clone --depth 10 https://github.com/proftpd/proftpd.git
   - cp mod_mime.c proftpd/contrib/
   - cd proftpd
-  - ./configure --enable-devel=coverage --enable-dso --enable-openssl --enable-tests --with-shared=mod_sftp:mod_mime
+  - ./configure LIBS='-lm -lsubunit -lrt -pthread' --enable-devel=coverage --enable-dso --enable-openssl --enable-tests --with-shared=mod_sftp:mod_mime
   - make
   # Last, a build with a static module, and run the tests
   - make clean
-  - ./configure --enable-devel=coverage --enable-openssl --enable-tests --with-modules=mod_sftp:mod_mime
+  - ./configure LIBS='-lm -lsubunit -lrt -pthread' --enable-devel=coverage --enable-openssl --enable-tests --with-modules=mod_sftp:mod_mime
   - make
