@@ -168,7 +168,7 @@ sub mime_feat_mlst_media_type {
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      my $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.mode*;UNIX.owner*;media-type*;';
+      my $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.groupname*;UNIX.mode*;UNIX.owner*;UNIX.ownername*;media-type*;';
 
       my $found = 0;
       my $nfeat = scalar(@$resp_msgs);
@@ -274,7 +274,7 @@ sub mime_opts_mlst_media_type {
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      my $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.mode*;UNIX.owner*;';
+      my $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.groupname;UNIX.mode*;UNIX.owner*;UNIX.ownername;';
 
       my $found = 0;
       my $nfeat = scalar(@$resp_msgs);
@@ -309,7 +309,7 @@ sub mime_opts_mlst_media_type {
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.mode*;UNIX.owner*;media-type*;';
+      $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.groupname;UNIX.mode*;UNIX.owner*;UNIX.ownername;media-type*;';
 
       my $found = 0;
       my $nfeat = scalar(@$resp_msgs);
@@ -403,6 +403,7 @@ sub mime_mlsd_media_type {
 
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port, 0, 1);
       $client->login($setup->{user}, $setup->{passwd});
+      $client->type('binary');
 
       my $conn = $client->mlsd_raw($test_dir);
       unless ($conn) {
@@ -420,12 +421,16 @@ sub mime_mlsd_media_type {
 
       $client->quit();
 
+      if ($ENV{TEST_VERBOSE}) {
+        print STDERR "# Response:\n$buf\n";
+      }
+
       # We have to be careful of the fact that readdir returns directory
       # entries in an unordered fashion.
       my $res = {};
       my $lines = [split(/(\r)?\n/, $buf)];
       foreach my $line (@$lines) {
-        if ($line =~ /^modify=\S+;perm=\S+;type=(\S+);unique=\S+;UNIX\.group=\d+;UNIX\.mode=\d+;UNIX.owner=\d+;media-type=(\S+); (.*?)$/) {
+        if ($line =~ /^modify=\S+;perm=\S+;type=(\S+);unique=\S+;UNIX\.group=\d+;UNIX\.groupname=\S+;UNIX\.mode=\d+;UNIX.owner=\d+;UNIX.ownername=\S+;media-type=(\S+); (.*?)$/) {
           $res->{$3} = $2;
         }
       }
@@ -543,11 +548,18 @@ sub mime_mlst_media_type {
       my $resp_msgs = $client->response_msgs();
       $client->quit();
 
+      if ($ENV{TEST_VERBOSE}) {
+        print STDERR "# Response:\n";
+        foreach my $msg (@$resp_msgs) {
+          print STDERR "# $msg\n";
+        }
+      }
+
       my $expected = 250;
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = " modify=20160116222604;perm=adfrw;size=2881;type=file;unique=1000004UAB7BD4;UNIX.group=20;UNIX.mode=0644;UNIX.owner=501;media-type=image/gif; $test_file";
+      $expected = " modify=20161223174518;perm=adfrw;size=2881;type=file;unique=1000004U14CE5B;UNIX.group=20;UNIX.groupname=ftpd;UNIX.mode=0644;UNIX.owner=501;UNIX.ownername=proftpd;media-type=image/gif; $test_file";
       my $ok = 0;
       my $nmsgs = scalar(@$resp_msgs);
       for (my $i = 0; $i < $nmsgs; $i++) {
