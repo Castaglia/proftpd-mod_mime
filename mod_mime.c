@@ -78,7 +78,7 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
    */
   switch (mime_file_allowed) {
     case FALSE:
-      errno = EACCES;
+      errno = EPERM;
       return -1;
 
     case TRUE:
@@ -134,7 +134,7 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
           "MIME type '%s' for '%s' is not in MIMEAllowType list, failing write",
           desc, fh->fh_path);
         mime_file_allowed = FALSE;
-        errno = EACCES;
+        errno = EPERM;
         return -1;
       }
 
@@ -161,7 +161,7 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
           "MIME type '%s' for '%s' is in MIMEDenyType list, failing write",
           desc, fh->fh_path);
         mime_file_allowed = FALSE;
-        errno = EACCES;
+        errno = EPERM;
         return -1;
       }
 
