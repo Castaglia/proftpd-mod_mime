@@ -1,6 +1,6 @@
 tests.log
 .libs
-.*.swp
+*.sw?
 *.la
 *.lo
 *.o
