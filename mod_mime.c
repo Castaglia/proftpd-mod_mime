@@ -1,6 +1,6 @@
 /*
  * ProFTPD: mod_mime -- provides MIME type detection
- * Copyright (c) 2013-2016 TJ Saunders
+ * Copyright (c) 2013-2019 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 
 #include "magic.h"
 
-#define MOD_MIME_VERSION	"mod_mime/0.2"
+#define MOD_MIME_VERSION	"mod_mime/0.3"
 
 /* Make sure the version of proftpd is as necessary. */
 #if PROFTPD_VERSION_NUMBER < 0x0001030402
@@ -43,6 +43,9 @@ static magic_t mime_magic = NULL;
 static int magic_flags = MAGIC_SYMLINK|MAGIC_MIME|MAGIC_ERROR;
 static array_header *mime_allow_types = NULL, *mime_deny_types = NULL;
 static cmd_rec *mime_cmd = NULL;
+
+static int mime_using_ftp = FALSE;
+static int mime_file_allowed = -1;
 
 #define MIME_OPT_NO_MLSX_FACTS		0x0001
 
@@ -73,29 +76,43 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
   /* If we have already determined the MIME type, then there's nothing more
    * for us to do.
    */
-  if (pr_table_get(mime_cmd->notes, "mod_mime.mime-type", NULL) != NULL) {
-    return write(fd, buf, bufsz);
+  if (mime_file_allowed == FALSE) {
+    errno = EACCES;
+    return -1;
+  }
+
+  if (mime_using_ftp) {
+    if (pr_table_get(mime_cmd->notes, "mod_mime.mime-type", NULL) != NULL) {
+      return write(fd, buf, bufsz);
+    }
   }
 
   flags = magic_flags;
   flags &= ~MAGIC_MIME_ENCODING;
 
   magic_setflags(mime_magic, flags);
+  pr_trace_msg(trace_channel, 12,
+    "using %lu %s of data to determine MIME type", (unsigned long) bufsz,
+    bufsz != 1 ? "bytes" : "byte");
   desc = magic_buffer(mime_magic, buf, bufsz);
   magic_setflags(mime_magic, magic_flags);
 
   if (desc != NULL) {
     size_t desclen;
 
+    pr_trace_msg(trace_channel, 7, "MIME description for '%s': %s", fh->fh_path,
+      desc);
     (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
       "MIME description for '%s': %s", fh->fh_path, desc);
 
     desclen = strlen(desc);
-    if (pr_table_add(mime_cmd->notes, "mod_mime.mime-type",
-        pstrndup(mime_cmd->pool, desc, desclen), desclen + 1) < 0) {
-      pr_log_debug(DEBUG0, MOD_MIME_VERSION
-        ": %s: error adding 'mod_mime.mime-type' note: %s",
-        (char *) mime_cmd->argv[0], strerror(errno));
+    if (mime_using_ftp) {
+      if (pr_table_add(mime_cmd->notes, "mod_mime.mime-type",
+          pstrndup(mime_cmd->pool, desc, desclen), desclen + 1) < 0) {
+        pr_log_debug(DEBUG0, MOD_MIME_VERSION
+          ": %s: error adding 'mod_mime.mime-type' note: %s",
+          (char *) mime_cmd->argv[0], strerror(errno));
+      }
     }
 
     /* Check the mime type against the allow/deny mime type lists. */
@@ -118,9 +135,12 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
         (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
           "MIME type '%s' for '%s' is not in MIMEAllowType list, failing write",
           desc, fh->fh_path);
+        mime_file_allowed = FALSE;
         errno = EACCES;
         return -1;
       }
+
+      mime_file_allowed = TRUE;
     }
 
     if (mime_deny_types != NULL) {
@@ -142,9 +162,12 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
         (void) pr_log_writefile(mime_logfd, MOD_MIME_VERSION,
           "MIME type '%s' for '%s' is in MIMEDenyType list, failing write",
           desc, fh->fh_path);
+        mime_file_allowed = FALSE;
         errno = EACCES;
         return -1;
       }
+
+      mime_file_allowed = TRUE;
     }
 
   } else {
@@ -175,10 +198,21 @@ MODRET mime_pre_stor(cmd_rec *cmd) {
     config_rec *c;
     char *best_path;
     xaset_t *dir_ctx;
+    const char *proto;
 
     fs->write = mime_fsio_write;
 
     mime_cmd = cmd;
+
+    /* Note that the `mime_cmd` pointer is really only valid for FTP/FTPS
+     * sessions, not SFTP/SCP, due to the differing command lifecyles
+     * of the respective protocols.
+     */
+    proto = pr_session_get_protocol(0);
+    if (strcmp(proto, "ftp") == 0 ||
+        strcmp(proto, "ftps") == 0) {
+      mime_using_ftp = TRUE;
+    }
 
     /* Check for <Directory>-specific MIME{Allow,Deny}Type lists. */
     best_path = dir_best_path(cmd->pool, cmd->arg);
@@ -221,6 +255,9 @@ MODRET mime_post_stor(cmd_rec *cmd) {
   /* Reset the allow/deny lists. */
   mime_allow_types = mime_deny_types = NULL;
   mime_cmd = NULL;
+
+  mime_using_ftp = FALSE;
+  mime_file_allowed = -1;
 
   return PR_DECLINED(cmd);
 }
