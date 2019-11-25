@@ -76,15 +76,13 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
   /* If we have already determined the MIME type, then there's nothing more
    * for us to do.
    */
-  if (mime_file_allowed == FALSE) {
-    errno = EACCES;
-    return -1;
-  }
+  switch (mime_file_allowed) {
+    case FALSE:
+      errno = EACCES;
+      return -1;
 
-  if (mime_using_ftp) {
-    if (pr_table_get(mime_cmd->notes, "mod_mime.mime-type", NULL) != NULL) {
+    case TRUE:
       return write(fd, buf, bufsz);
-    }
   }
 
   flags = magic_flags;
