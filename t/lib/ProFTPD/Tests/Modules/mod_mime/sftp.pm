@@ -96,13 +96,36 @@ sub set_up {
   # Make sure that mod_sftp does not complain about permissions on the hostkey
   # files.
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   unless (chmod(0400, $rsa_host_key, $dsa_host_key)) {
     die("Can't set perms on $rsa_host_key, $dsa_host_key: $!");
   }
 }
+
+# Support functions
+
+sub create_test_dir {
+  my $setup = shift;
+  my $sub_dir = shift;
+
+  mkpath($sub_dir);
+
+  # Make sure that, if we're running as root, that the sub directory has
+  # permissions/privs set for the account we create
+  if ($< == 0) {
+    unless (chmod(0755, $sub_dir)) {
+      die("Can't set perms on $sub_dir to 0755: $!");
+    }
+
+    unless (chown($setup->{uid}, $setup->{gid}, $sub_dir)) {
+      die("Can't set owner of $sub_dir to $setup->{uid}/$setup->{gid}: $!");
+    }
+  }
+}
+
+# Test cases
 
 sub mime_sftp_upload_text {
   my $self = shift;
@@ -111,13 +134,15 @@ sub mime_sftp_upload_text {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $config = {
     PidFile => $setup->{pid_file},
     ScoreboardFile => $setup->{scoreboard_file},
     SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'fsio:10 mime:20',
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
@@ -224,7 +249,7 @@ sub mime_sftp_upload_text {
 
   eval {
     if (open(my $fh, "< $setup->{log_file}")) {
-      my $mime_type;
+      my $mime_type = '';
 
       while (my $line = <$fh>) {
         chomp($line);
@@ -263,8 +288,8 @@ sub mime_sftp_upload_empty {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $config = {
     PidFile => $setup->{pid_file},
@@ -373,7 +398,7 @@ sub mime_sftp_upload_empty {
 
   eval {
     if (open(my $fh, "< $setup->{log_file}")) {
-      my $mime_type;
+      my $mime_type = '';
 
       while (my $line = <$fh>) {
         chomp($line);
@@ -390,7 +415,7 @@ sub mime_sftp_upload_empty {
 
       close($fh);
 
-      $self->assert(!defined($mime_type),
+      $self->assert($mime_type eq '',
         test_msg("Expected no MIME type, got '$mime_type'"));
 
     } else {
@@ -411,8 +436,8 @@ sub mime_sftp_upload_binary {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $data;
 
@@ -537,7 +562,7 @@ sub mime_sftp_upload_binary {
 
   eval {
     if (open(my $fh, "< $setup->{log_file}")) {
-      my $mime_type;
+      my $mime_type = '';
 
       while (my $line = <$fh>) {
         chomp($line);
@@ -576,8 +601,8 @@ sub mime_sftp_upload_single_byte {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $config = {
     PidFile => $setup->{pid_file},
@@ -692,7 +717,7 @@ sub mime_sftp_upload_single_byte {
 
   eval {
     if (open(my $fh, "< $setup->{log_file}")) {
-      my $mime_type;
+      my $mime_type = '';
 
       while (my $line = <$fh>) {
         chomp($line);
@@ -731,8 +756,8 @@ sub mime_sftp_config_allowtype_with_gif {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $data;
 
@@ -858,7 +883,7 @@ sub mime_sftp_config_allowtype_with_gif {
 
   eval {
     if (open(my $fh, "< $setup->{log_file}")) {
-      my $mime_type;
+      my $mime_type = '';
 
       while (my $line = <$fh>) {
         chomp($line);
@@ -897,8 +922,8 @@ sub mime_sftp_config_allowtype_without_gif {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $data;
 
@@ -1036,7 +1061,7 @@ sub mime_sftp_config_allowtype_without_gif {
 
   eval {
     if (open(my $fh, "< $setup->{log_file}")) {
-      my $mime_type;
+      my $mime_type = '';
 
       while (my $line = <$fh>) {
         chomp($line);
@@ -1075,8 +1100,8 @@ sub mime_sftp_config_allowtype_using_dir {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $data;
 
@@ -1091,10 +1116,10 @@ sub mime_sftp_config_allowtype_using_dir {
   }
 
   my $sub_dir1 = File::Spec->rel2abs("$tmpdir/test1.d");
-  mkpath($sub_dir1);
+  create_test_dir($setup, $sub_dir1);
 
   my $sub_dir2 = File::Spec->rel2abs("$tmpdir/test2.d");
-  mkpath($sub_dir2);
+  create_test_dir($setup, $sub_dir2);
 
   my $config = {
     PidFile => $setup->{pid_file},
@@ -1223,7 +1248,7 @@ EOC
         die("Can't open test2.d/test.txt: [$err_name] ($err_code)");
       }
 
-      my $buf = "Hello, World!\n";
+      $buf = "Hello, World!\n";
       unless ($fh->write($buf)) {
         my ($err_code, $err_name) = $sftp->error();
         die("Can't write test2.d/test.txt: [$err_name] ($err_code)");
@@ -1279,8 +1304,8 @@ sub mime_sftp_config_allowtype_using_ftpaccess {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $data;
 
@@ -1295,7 +1320,7 @@ sub mime_sftp_config_allowtype_using_ftpaccess {
   }
 
   my $sub_dir1 = File::Spec->rel2abs("$tmpdir/test1.d");
-  mkpath($sub_dir1);
+  create_test_dir($setup, $sub_dir1);
 
   my $ftpaccess_file = File::Spec->rel2abs("$sub_dir1/.ftpaccess");
   if (open(my $fh, "> $ftpaccess_file")) {
@@ -1310,7 +1335,7 @@ sub mime_sftp_config_allowtype_using_ftpaccess {
   }
 
   my $sub_dir2 = File::Spec->rel2abs("$tmpdir/test2.d");
-  mkpath($sub_dir2);
+  create_test_dir($setup, $sub_dir2);
 
   $ftpaccess_file = File::Spec->rel2abs("$sub_dir2/.ftpaccess");
   if (open(my $fh, "> $ftpaccess_file")) {
@@ -1329,7 +1354,7 @@ sub mime_sftp_config_allowtype_using_ftpaccess {
     ScoreboardFile => $setup->{scoreboard_file},
     SystemLog => $setup->{log_file},
     TraceLog => $setup->{log_file},
-    Trace => 'mime:10 sftp:20',
+    Trace => 'fsio:20 mime:10 sftp:20',
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
@@ -1490,8 +1515,8 @@ sub mime_sftp_config_denytype_with_gif {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $data;
 
@@ -1619,7 +1644,7 @@ sub mime_sftp_config_denytype_with_gif {
 
   eval {
     if (open(my $fh, "< $setup->{log_file}")) {
-      my $mime_type;
+      my $mime_type = '';
 
       while (my $line = <$fh>) {
         chomp($line);
@@ -1658,8 +1683,8 @@ sub mime_sftp_config_denytype_without_gif {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $data;
 
@@ -1788,7 +1813,7 @@ sub mime_sftp_config_denytype_without_gif {
 
   eval {
     if (open(my $fh, "< $setup->{log_file}")) {
-      my $mime_type;
+      my $mime_type = '';
 
       while (my $line = <$fh>) {
         chomp($line);
@@ -1827,8 +1852,8 @@ sub mime_sftp_config_denytype_using_dir {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $data;
 
@@ -1843,10 +1868,10 @@ sub mime_sftp_config_denytype_using_dir {
   }
 
   my $sub_dir1 = File::Spec->rel2abs("$tmpdir/test1.d");
-  mkpath($sub_dir1);
+  create_test_dir($setup, $sub_dir1);
 
   my $sub_dir2 = File::Spec->rel2abs("$tmpdir/test2.d");
-  mkpath($sub_dir2);
+  create_test_dir($setup, $sub_dir2);
 
   my $config = {
     PidFile => $setup->{pid_file},
@@ -2030,8 +2055,8 @@ sub mime_sftp_config_denytype_using_ftpaccess {
 
   my $mime_tab = File::Spec->rel2abs('t/etc/modules/mod_mime/magic');
 
-  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_rsa_key");
-  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/t/etc/modules/mod_sftp/ssh_host_dsa_key");
+  my $rsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_rsa_key");
+  my $dsa_host_key = File::Spec->rel2abs("$ENV{PROFTPD_TEST_DIR}/tests/t/etc/modules/mod_sftp/ssh_host_dsa_key");
 
   my $data;
 
@@ -2046,7 +2071,7 @@ sub mime_sftp_config_denytype_using_ftpaccess {
   }
 
   my $sub_dir1 = File::Spec->rel2abs("$tmpdir/test1.d");
-  mkpath($sub_dir1);
+  create_test_dir($setup, $sub_dir1);
 
   my $ftpaccess_file = File::Spec->rel2abs("$sub_dir1/.ftpaccess");
   if (open(my $fh, "> $ftpaccess_file")) {
@@ -2061,7 +2086,7 @@ sub mime_sftp_config_denytype_using_ftpaccess {
   }
 
   my $sub_dir2 = File::Spec->rel2abs("$tmpdir/test2.d");
-  mkpath($sub_dir2);
+  create_test_dir($setup, $sub_dir2);
 
   $ftpaccess_file = File::Spec->rel2abs("$sub_dir2/.ftpaccess");
   if (open(my $fh, "> $ftpaccess_file")) {
