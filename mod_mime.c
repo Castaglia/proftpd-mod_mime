@@ -1,6 +1,6 @@
 /*
  * ProFTPD: mod_mime -- provides MIME type detection
- * Copyright (c) 2013-2019 TJ Saunders
+ * Copyright (c) 2013-2021 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
 
 #include "magic.h"
 
-#define MOD_MIME_VERSION	"mod_mime/0.3"
+#define MOD_MIME_VERSION	"mod_mime/0.3.1"
 
 /* Make sure the version of proftpd is as necessary. */
 #if PROFTPD_VERSION_NUMBER < 0x0001030402
@@ -68,8 +68,7 @@ static int mime_sess_init(void);
 /* FSIO handlers
  */
 
-static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
-    size_t bufsz) {
+static int mime_fsio_write_allowed(pr_fh_t *fh, const char *buf, size_t bufsz) {
   int flags;
   const char *desc;
 
@@ -82,7 +81,7 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
       return -1;
 
     case TRUE:
-      return write(fd, buf, bufsz);
+      return 0;
   }
 
   flags = magic_flags;
@@ -104,7 +103,7 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
       "MIME description for '%s': %s", fh->fh_path, desc);
 
     desclen = strlen(desc);
-    if (mime_using_ftp) {
+    if (mime_using_ftp == TRUE) {
       if (pr_table_add(mime_cmd->notes, "mod_mime.mime-type",
           pstrndup(mime_cmd->pool, desc, desclen), desclen + 1) < 0) {
         pr_log_debug(DEBUG0, MOD_MIME_VERSION
@@ -174,8 +173,34 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
       fh->fh_path, bufsz, magic_error(mime_magic));
   }
 
+  return 0;
+}
+
+static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
+    size_t bufsz) {
+  int res;
+
+  res = mime_fsio_write_allowed(fh, buf, bufsz);
+  if (res < 0) {
+    return -1;
+  }
+
   return write(fd, buf, bufsz); 
 }
+
+#if PROFTPD_VERSION_NUMBER >= 0x0001030704
+static ssize_t mime_fsio_pwrite(pr_fh_t *fh, int fd, const void *buf,
+    size_t bufsz, off_t offset) {
+  int res;
+
+  res = mime_fsio_write_allowed(fh, buf, bufsz);
+  if (res < 0) {
+    return -1;
+  }
+
+  return pwrite(fd, buf, bufsz, offset);
+}
+#endif /* ProFTPD 1.3.7rc4 and later */
 
 /* Command handlers
  */
@@ -199,6 +224,9 @@ MODRET mime_pre_stor(cmd_rec *cmd) {
     const char *proto;
 
     fs->write = mime_fsio_write;
+#if PROFTPD_VERSION_NUMBER >= 0x0001030704
+    fs->pwrite = mime_fsio_pwrite;
+#endif /* ProFTPD 1.3.7rc4 and later */
 
     mime_cmd = cmd;
 

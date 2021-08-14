@@ -109,6 +109,28 @@ sub list_tests {
   return testsuite_get_runnable_tests($TESTS);
 }
 
+# Support functions
+
+sub create_test_dir {
+  my $setup = shift;
+  my $sub_dir = shift;
+
+  mkpath($sub_dir);
+
+  # Make sure that, if we're running as root, that the sub directory has
+  # permissions/privs set for the account we create
+  if ($< == 0) {
+    unless (chmod(0755, $sub_dir)) {
+      die("Can't set perms on $sub_dir to 0755: $!");
+    }
+
+    unless (chown($setup->{uid}, $setup->{gid}, $sub_dir)) {
+      die("Can't set owner of $sub_dir to $setup->{uid}/$setup->{gid}: $!");
+    }
+  }
+}
+
+# Test cases
 sub mime_feat_mlst_media_type {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
@@ -288,10 +310,10 @@ sub mime_opts_mlst_media_type {
       $self->assert($found, test_msg("Did not see expected '$expected_feat'"));
 
       # OPTS MLST to re-enable media-type; confirm via FEAT
-      my $mime_type_opts = 'modify;perm;size;type;unique;UNIX.group;UNIX.mode;UNIX.owner;media-type;';
-      my ($resp_code, $resp_msg) = $client->opts("MLST $mime_type_opts");
+      $mime_type_opts = 'modify;perm;size;type;unique;UNIX.group;UNIX.mode;UNIX.owner;media-type;';
+      ($resp_code, $resp_msg) = $client->opts("MLST $mime_type_opts");
 
-      my $expected = 200;
+      $expected = 200;
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
@@ -311,8 +333,8 @@ sub mime_opts_mlst_media_type {
 
       $expected_feat = ' MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.groupname;UNIX.mode*;UNIX.owner*;UNIX.ownername;media-type*;';
 
-      my $found = 0;
-      my $nfeat = scalar(@$resp_msgs);
+      $found = 0;
+      $nfeat = scalar(@$resp_msgs);
       for (my $i = 0; $i < $nfeat; $i++) {
         if ($resp_msgs->[$i] eq $expected_feat) {
           $found = 1;
@@ -322,7 +344,6 @@ sub mime_opts_mlst_media_type {
 
       $self->assert($found, test_msg("Did not see expected '$expected_feat'"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -443,7 +464,7 @@ sub mime_mlsd_media_type {
       };
 
       my $ok = 1;
-      my $mismatch;
+      my $mismatch = '';
       foreach my $name (keys(%$expected)) {
         unless (defined($res->{$name})) {
           $mismatch = $name;
@@ -559,20 +580,20 @@ sub mime_mlst_media_type {
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = " modify=20161223174518;perm=adfrw;size=2881;type=file;unique=1000004U14CE5B;UNIX.group=20;UNIX.groupname=ftpd;UNIX.mode=0644;UNIX.owner=501;UNIX.ownername=proftpd;media-type=image/gif; $test_file";
+      $expected = "modify=\\d+;perm=\\S+;size=2881;type=file;unique=\\S+;UNIX.group=\\d+;UNIX.groupname=\\S+;UNIX.mode=\\S+;UNIX.owner=\\d+;UNIX.ownername=\\S+;media-type=image/gif; $test_file";
+
       my $ok = 0;
       my $nmsgs = scalar(@$resp_msgs);
       for (my $i = 0; $i < $nmsgs; $i++) {
-        if ($resp_msgs->[$i] eq $expected) {
+        if ($resp_msgs->[$i] =~ /$expected/) {
           $ok = 1;
           last;
         }
       }
 
       $self->assert($ok,
-        test_msg("Did not see expected data '$expected' in MLST response"));
+        test_msg("Did not see expected data '$expected' in MLST response '$resp_msgs->[1]'"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -805,7 +826,7 @@ sub mime_stor_empty {
 
   eval {
     if (open(my $fh, "< $setup->{log_file}")) {
-      my $mime_type;
+      my $mime_type = '';
 
       while (my $line = <$fh>) {
         chomp($line);
@@ -818,7 +839,7 @@ sub mime_stor_empty {
 
       close($fh);
 
-      $self->assert(!defined($mime_type),
+      $self->assert($mime_type eq '',
         test_msg("Expected no MIME type, got '$mime_type'"));
 
     } else {
@@ -1292,13 +1313,12 @@ sub mime_config_allowtype_without_gif {
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
       $client->quit();
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -1370,10 +1390,10 @@ sub mime_config_allowtype_using_dir {
   }
 
   my $sub_dir1 = File::Spec->rel2abs("$tmpdir/test1.d");
-  mkpath($sub_dir1);
+  create_test_dir($setup, $sub_dir1);
 
   my $sub_dir2 = File::Spec->rel2abs("$tmpdir/test2.d");
-  mkpath($sub_dir2);
+  create_test_dir($setup, $sub_dir2);
 
   my $config = {
     PidFile => $setup->{pid_file},
@@ -1471,7 +1491,7 @@ EOC
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
@@ -1482,12 +1502,12 @@ EOC
           $client->response_msg());
       }
 
-      my $buf = "Hello, World!\n";
+      $buf = "Hello, World!\n";
       $conn->write($buf, length($buf), 25);
       eval { $conn->close() };
 
-      my $resp_code = $client->response_code();
-      my $resp_msg = $client->response_msg();
+      $resp_code = $client->response_code();
+      $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
       $conn = $client->stor_raw('test2.d/test.dat');
@@ -1502,17 +1522,16 @@ EOC
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
 
-      my $expected = 426;
+      $expected = 426;
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
       $client->quit();
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -1557,7 +1576,7 @@ sub mime_config_allowtype_using_ftpaccess {
   }
 
   my $sub_dir1 = File::Spec->rel2abs("$tmpdir/test1.d");
-  mkpath($sub_dir1);
+  create_test_dir($setup, $sub_dir1);
 
   my $ftpaccess_file = File::Spec->rel2abs("$sub_dir1/.ftpaccess");
   if (open(my $fh, "> $ftpaccess_file")) {
@@ -1572,7 +1591,7 @@ sub mime_config_allowtype_using_ftpaccess {
   }
 
   my $sub_dir2 = File::Spec->rel2abs("$tmpdir/test2.d");
-  mkpath($sub_dir2);
+  create_test_dir($setup, $sub_dir2);
 
   $ftpaccess_file = File::Spec->rel2abs("$sub_dir2/.ftpaccess");
   if (open(my $fh, "> $ftpaccess_file")) {
@@ -1664,7 +1683,7 @@ sub mime_config_allowtype_using_ftpaccess {
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
@@ -1675,12 +1694,12 @@ sub mime_config_allowtype_using_ftpaccess {
           $client->response_msg());
       }
 
-      my $buf = "Hello, World!\n";
+      $buf = "Hello, World!\n";
       $conn->write($buf, length($buf), 25);
       eval { $conn->close() };
 
-      my $resp_code = $client->response_code();
-      my $resp_msg = $client->response_msg();
+      $resp_code = $client->response_code();
+      $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
       $conn = $client->stor_raw('test2.d/test.dat');
@@ -1695,17 +1714,16 @@ sub mime_config_allowtype_using_ftpaccess {
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
 
-      my $expected = 426;
+      $expected = 426;
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
       $client->quit();
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -1810,13 +1828,12 @@ sub mime_config_denytype_with_gif {
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
       $client->quit();
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -2019,10 +2036,10 @@ sub mime_config_denytype_using_dir {
   }
 
   my $sub_dir1 = File::Spec->rel2abs("$tmpdir/test1.d");
-  mkpath($sub_dir1);
+  create_test_dir($setup, $sub_dir1);
 
   my $sub_dir2 = File::Spec->rel2abs("$tmpdir/test2.d");
-  mkpath($sub_dir2);
+  create_test_dir($setup, $sub_dir2);
 
   my $config = {
     PidFile => $setup->{pid_file},
@@ -2120,7 +2137,7 @@ EOC
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
@@ -2134,8 +2151,8 @@ EOC
       $conn->write($data, length($data), 25);
       eval { $conn->close() };
 
-      my $resp_code = $client->response_code();
-      my $resp_msg = $client->response_msg();
+      $resp_code = $client->response_code();
+      $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
       $conn = $client->stor_raw('test2.d/test.txt');
@@ -2144,24 +2161,23 @@ EOC
           $client->response_msg());
       }
 
-      my $buf = "Hello, World!\n";
+      $buf = "Hello, World!\n";
       $conn->write($buf, length($buf), 25);
       eval { $conn->close() };
 
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
 
-      my $expected = 426;
+      $expected = 426;
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
       $client->quit();
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -2206,7 +2222,7 @@ sub mime_config_denytype_using_ftpaccess {
   }
 
   my $sub_dir1 = File::Spec->rel2abs("$tmpdir/test1.d");
-  mkpath($sub_dir1);
+  create_test_dir($setup, $sub_dir1);
 
   my $ftpaccess_file = File::Spec->rel2abs("$sub_dir1/.ftpaccess");
   if (open(my $fh, "> $ftpaccess_file")) {
@@ -2221,7 +2237,7 @@ sub mime_config_denytype_using_ftpaccess {
   }
 
   my $sub_dir2 = File::Spec->rel2abs("$tmpdir/test2.d");
-  mkpath($sub_dir2);
+  create_test_dir($setup, $sub_dir2);
 
   $ftpaccess_file = File::Spec->rel2abs("$sub_dir2/.ftpaccess");
   if (open(my $fh, "> $ftpaccess_file")) {
@@ -2313,7 +2329,7 @@ sub mime_config_denytype_using_ftpaccess {
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
@@ -2327,8 +2343,8 @@ sub mime_config_denytype_using_ftpaccess {
       $conn->write($data, length($data), 25);
       eval { $conn->close() };
 
-      my $resp_code = $client->response_code();
-      my $resp_msg = $client->response_msg();
+      $resp_code = $client->response_code();
+      $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
       $conn = $client->stor_raw('test2.d/test.txt');
@@ -2337,24 +2353,23 @@ sub mime_config_denytype_using_ftpaccess {
           $client->response_msg());
       }
 
-      my $buf = "Hello, World!\n";
+      $buf = "Hello, World!\n";
       $conn->write($buf, length($buf), 25);
       eval { $conn->close() };
 
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
 
-      my $expected = 426;
+      $expected = 426;
       $self->assert($expected == $resp_code,
         test_msg("Expected response code $expected, got $resp_code"));
 
-      $expected = "Transfer aborted. Permission denied";
+      $expected = "Transfer aborted. Operation not permitted";
       $self->assert($expected eq $resp_msg,
         test_msg("Expected response message '$expected', got '$resp_msg'"));
 
       $client->quit();
     };
-
     if ($@) {
       $ex = $@;
     }
