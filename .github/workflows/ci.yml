@@ -89,7 +89,7 @@ jobs:
           yum install -y file-devel file-libs
 
           # for OpenSSL support
-          yum install -y openssl-devel
+          yum install -y openssl openssl-devel
 
           # for debugging
           clang --version
