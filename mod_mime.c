@@ -185,7 +185,7 @@ static int mime_fsio_write(pr_fh_t *fh, int fd, const char *buf,
     return -1;
   }
 
-  return write(fd, buf, bufsz); 
+  return write(fd, buf, bufsz);
 }
 
 #if PROFTPD_VERSION_NUMBER >= 0x0001030704
@@ -465,7 +465,7 @@ MODRET set_mimetable(cmd_rec *cmd) {
   }
 
   c->argv[0] = tables;
- 
+
   return PR_HANDLED(cmd);
 }
 
@@ -514,7 +514,7 @@ static void mime_postparse_ev(const void *event_data, void *user_data) {
 
       errstr = magic_error(mime_magic);
       if (errstr == NULL) {
-        errstr = strerror(xerrno); 
+        errstr = strerror(xerrno);
       }
 
       pr_log_debug(DEBUG0, MOD_MIME_VERSION
@@ -603,7 +603,7 @@ static int mime_sess_init(void) {
 
       if (res < 0) {
         pr_log_pri(PR_LOG_NOTICE, MOD_MIME_VERSION
-          ": error opening MIMELog '%s': %s", path, strerror(xerrno)); 
+          ": error opening MIMELog '%s': %s", path, strerror(xerrno));
       }
     }
   }
