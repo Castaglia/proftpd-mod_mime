@@ -1239,7 +1239,7 @@ EOC
       }
 
       # To issue the FXP_CLOSE, we have to explicit destroy the filehandle
-      $fh = undef; 
+      $fh = undef;
 
       # We should be able to upload a text file to test2.d, but not a GIF
       $fh = $sftp->open('test2.d/test.txt', O_WRONLY|O_CREAT, 0644);
@@ -1473,7 +1473,7 @@ sub mime_sftp_config_allowtype_using_ftpaccess {
         my ($err_code, $err_name) = $sftp->error();
         die("Can't open test2.d/test.dat: [$err_name] ($err_code)");
       }
-      
+
       if ($fh->write($data)) {
         die("Write to test2.d/test.dat succeeded unexpectedly");
       }
@@ -2012,12 +2012,12 @@ EOC
       unless ($fh) {
         my ($err_code, $err_name) = $sftp->error();
         die("Can't open test2.d/test.txt: [$err_name] ($err_code)");
-      }   
-      
+      }
+
       if ($fh->write($buf)) {
         die("Write to test2.d/test.txt succeeded unexpectedly");
-      } 
-      
+      }
+
       # To issue the FXP_CLOSE, we have to explicit destroy the filehandle
       $fh = undef;
 
